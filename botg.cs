@@ -406,6 +406,28 @@ class Player
         return mv;
     }
     
+    static Action MoveAttack(Entity hero, Entity enemy) {
+        var dist = Math.Sqrt(Dist2(hero, enemy));
+        if (dist < hero.AttackRange) {
+            return Action.Attack(hero, enemy);            
+        }
+        if (dist < hero.AttackRange + hero.Speed) {
+            double attackTime = hero.AttackRange > 150 ? (0.1 * dist / hero.AttackRange) : 0.0;            
+            // minimum distance needed to travel to hit 
+            double moveTime = ((dist - hero.AttackRange) + 1.0) / hero.Speed;
+            if (moveTime + attackTime < 1.0) {
+                double pct = (1.0 + (dist - hero.AttackRange)) / dist;
+                Console.Error.WriteLine(" dist:{0:0.0} ar:{1} mt:{2:0.00} at:{3:0.00} pct:{4:0.000}", dist, hero.AttackRange, moveTime, attackTime, pct);
+                double mx = hero.X + pct * (enemy.X - hero.X);
+                double my = hero.Y + pct * (enemy.Y - hero.Y);
+                return Action.MoveAttack(hero, (int)mx, (int)my, enemy);
+            }
+        }
+        // just move close to the guy
+        Console.Error.WriteLine(" just move to him!");
+        return Action.Move(hero, enemy.X, enemy.Y);        
+    }
+    
     static void Main(string[] args)
     {
         string[] inputs;
@@ -500,8 +522,8 @@ class Player
             }
 
             if (roundType < 0) {
-                if (turn == 1) Console.WriteLine("IRONMAN");
-                else Console.WriteLine("DOCTOR_STRANGE");
+                if (turn == 1) Console.WriteLine("HULK");
+                else Console.WriteLine("DEADPOOL");
             }
             else {
                 if (turn <= 5) {                    
@@ -519,36 +541,56 @@ class Player
                         Console.WriteLine(Action.Move(myHeros[1], myTower.X, myTower.Y));
                     }
                 } else {
+                    var targetEnemy = his.Values
+                                     .Where(u => u.Type == UnitType.HERO 
+                                              && myHeros.All(mh => 
+                                                             Math.Sqrt(Dist2(mh, u)) < mh.Speed + mh.AttackRange))
+                                     .OrderBy(u => u.Health).FirstOrDefault();
+                    if (targetEnemy != null) { 
+                        Console.Error.WriteLine("TGT: {0} {1} (h: {2})", targetEnemy.Id, targetEnemy.HeroType, targetEnemy.Health);
+                    }
                     foreach(var myHero in myHeros) {
-                        var healthRatio = myHero.Health * 1.0 / myHero.MaxHealth;
-                        Console.Error.WriteLine("{0} (hr: {1:0.00})", myHero.HeroType, healthRatio);                                         
-                        if (Dist2(myHero, hisTower) <= 160000) {
-                            Console.Error.WriteLine("too close!");                        
-                            var safeSpot = FindSafePosition(myHero, my.Values, his.Values);
-                            Console.WriteLine("MOVE " + safeSpot.TX + " " + safeSpot.TY);
-                            Console.WriteLine("MOVE " + safeSpot.TX + " " + safeSpot.TY);
-                        } else {
-                           if (myHero.Health < 270) {
-                                // see if we can buy a potion
-                                Item bestItem = evalPotion(myHero, items.Values, gold);
-                                if (bestItem != null && myHero.Health + bestItem.Health > 350) {
-                                    gold -= bestItem.Cost;
-                                    Console.WriteLine("BUY " + bestItem.Name);
-                                } else {                                    
-                                    var safeSpot = FindSafePosition(myHero, my.Values, his.Values);
-                                    Console.WriteLine(safeSpot);
-                                }
-                            }else {
-                                Item bestItem = evalPurchase(myHero, items.Values, gold);
-                                if (bestItem != null) {
-                                    gold -= bestItem.Cost;
-                                    Console.WriteLine("BUY " + bestItem.Name);                                        
-                                } else {
-                                    var safeSpot = FindSafePosition(myHero, my.Values, his.Values);
-                                    Console.WriteLine(safeSpot);
-                                }
-                            }                        
+                        if (myHero.Health < 300) {
+                            var potion = evalPotion(myHero, items.Values, gold);
+                            if (potion != null) {
+                                Console.WriteLine("BUY " + potion.Name);
+                                continue;
+                            }
                         }
+                        if (myHero.HeroType == HeroType.DEADPOOL) {
+                            if (myHero.Mana > 40 
+                                && Math.Sqrt(Dist2(myHero, hisTower)) < 150 
+                                && myHero.CountDown[0] == 0) {
+                                Console.WriteLine("COUNTER");
+                                continue;
+                            }
+                        }
+                        if (myHero.HeroType == HeroType.HULK) {
+                            
+                            /*if (myHero.Mana > 40 && myHero.CountDown[2] == 0
+                                && Math.Sqrt(Dist2(myHero, hisTower)) < 150) {
+                                var closest = his.Values.Where(u => u.Type == UnitType.HERO 
+                                                                  && Math.Sqrt(Dist2(myHero, u)) < 150)
+                                                        .OrderBy(u => u.Health).FirstOrDefault();
+                                if (closest != null) {
+                                    Console.WriteLine("BASH " + closest.Id);
+                                    continue;
+                                }
+                            }*/
+                            /*if (myHero.Mana > 40 
+                                && Math.Sqrt(Dist2(myHero, hisTower)) < 150 
+                                && myHero.CountDown[1] == 0) {
+                                Console.WriteLine("EXPLOSIVESHIELD");
+                                continue;
+                            }*/
+                        }
+                        if (targetEnemy != null) {
+                            var action = MoveAttack(myHero, targetEnemy);                            
+                            Console.WriteLine(action);
+                            continue;                            
+                        }
+                        
+                        Console.WriteLine("ATTACK_NEAREST HERO");                        
                     }
                 }
             }
