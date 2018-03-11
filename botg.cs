@@ -105,6 +105,11 @@ class Player
                 TX = x, TY = y
             };
         }
+        public static Action AOEHeal(Entity entity, double x, double y) {
+            return new Action("AOEHEAL", entity) {
+                TX = x, TY = y
+            };
+        }
         public double TX; // target x coord after action
         public double TY; // target y coord after action
         public Entity Entity; // entity to perform action
@@ -115,9 +120,10 @@ class Player
             if (Verb == "MOVE_ATTACK") return String.Format("MOVE_ATTACK {0} {1} {2}", TX, TY, Other.Id);
             if (Verb == "ATTACK") return "ATTACK " + Other.Id;
             if (Verb == "WAIT") return "WAIT";
-            if (Verb == "FIREBALL") return "FIREBALL"  + TX + " " + TY;
+            if (Verb == "FIREBALL") return "FIREBALL "  + TX + " " + TY;
             if (Verb == "BURNING") return "BURNING " + TX + " " + TY;
             if (Verb == "BLINK") return "BLINK " + TX + " " + TY;
+            if (Verb == "AOEHEAL") return "AOEHEAL " + TX + " " + TY;
             return "WAIT";
         }
     }
@@ -144,25 +150,42 @@ class Player
         return Action.Wait(me); // can't possibly attack this turn        
     }    
     
-    static Item evalPurchase(IEnumerable<Item> items, int gold) {
-        Console.Error.WriteLine("have: {0} gold", gold);
+    static Item evalPurchase(Entity hero, IEnumerable<Item> items, int gold) {
+        Console.Error.WriteLine("have: {0} gold; {1} items", gold, hero.ItemsOwned);
         Item bestItem = null;
-        foreach(var item in items.Where(itm => !itm.IsPotion && itm.Cost < gold 
-                                               && (itm.Damage >= 5 || itm.Speed >= 20 || itm.MaxHealth >= 80))
-                                 .OrderBy(itm => -(itm.Damage * 10  + itm.MaxHealth + itm.Speed * 4) * 1.0 / itm.Cost)) 
-        {
-            if (bestItem == null) {
-                bestItem = item;
+        if (hero.ItemsOwned < 2) {            
+            foreach(var item in items.Where(itm => !itm.IsPotion && itm.Cost < gold 
+                                                   && (itm.Damage >= 5 || itm.Speed >= 20 || itm.MaxHealth >= 80))
+                                     .OrderBy(itm => -(itm.Damage * 10  + itm.MaxHealth + itm.Speed * 4) * 1.0 / itm.Cost)) 
+            {
+                if (bestItem == null) {
+                    bestItem = item;
+                }
+                Console.Error.WriteLine(item);
             }
-            Console.Error.WriteLine(item);
+        }else if (hero.ItemsOwned == 2) {
+            // only get silver or better stuff..
+            foreach(var item in items.Where(itm => !itm.IsPotion && itm.Cost < gold 
+                                                   && !itm.Name.StartsWith("Bronze")
+                                                   && (itm.Damage >= 5 || itm.Speed >= 20 || itm.MaxHealth >= 80))
+                                     .OrderBy(itm => -(itm.Damage * 10  + itm.MaxHealth + itm.Speed * 4) * 1.0 / itm.Cost)) 
+            {
+                if (bestItem == null) {
+                    bestItem = item;
+                }
+                Console.Error.WriteLine(item);
+            }
         }
         return bestItem;
     }
     
-    static Item evalPotion(IEnumerable<Item> items, int health, int gold) {
+    static Item evalPotion(Entity hero, IEnumerable<Item> items, int gold) {
         Item bestItem = null;
-        foreach(var item in items.Where(itm => itm.IsPotion && itm.Cost < gold && itm.Health > 25)
-                                 .OrderBy(itm => -itm.Health)) 
+        // only items I can afford, ordered by how much health they offer
+        
+        foreach(var item in items.Where(itm => itm.Cost < gold && itm.Health > 25)
+                                 .OrderBy(itm => -itm.Health)
+                                 .Where(itm => itm.IsPotion || hero.ItemsOwned < 3)) 
         {
             if (bestItem == null) {
                 bestItem = item;
@@ -235,24 +258,98 @@ class Player
     }
     
     
+    static Action TestFireball(Entity hero, IEnumerable<Entity> his) {
+        if (hero.HeroType == HeroType.IRONMAN) {
+                //   do I have enough mana to FIREBALL? 
+            if (hero.Mana > 60 && hero.CountDown[1] == 0) {
+                
+                var hisHeroes = his.Where(u => u.Type == UnitType.HERO).ToList();
+                if (hisHeroes.Count == 2) {
+                    var dh = Math.Sqrt(Dist2(hisHeroes[0], hisHeroes[1]));
+                    var dh0 = Math.Sqrt(Dist2(hero, hisHeroes[0]));
+                    var dh1 = Math.Sqrt(Dist2(hero, hisHeroes[1]));
+                    var mpx = (hisHeroes[0].X + hisHeroes[1].X) / 2;
+                    var mpy = (hisHeroes[0].Y + hisHeroes[1].Y) / 2;
+                    if (dh < 50 && Math.Sqrt(Dist2(mpx, mpy, hero)) < 500) {
+                        // pick mid point & fire there
+                        Console.Error.WriteLine("fireball to midpoint");
+                        return Action.Fireball(hero, mpx, mpy);                            
+                    } else {
+                        var dmg0 = hero.Mana * 0.2 + 55 * dh0 / 1000;
+                        var dmg1 = hero.Mana * 0.2 + 55 * dh1 / 1000;
+                        if (dmg0 > dmg1 && dh0 < 500) {
+                            Console.Error.WriteLine("fireball to hero 0");
+                            return Action.Fireball(hero, hisHeroes[0].X, hisHeroes[0].Y);
+                        } else if (dh1 < 500) {
+                            Console.Error.WriteLine("fireball to hero 1");
+                            return Action.Fireball(hero, hisHeroes[1].X, hisHeroes[1].Y);
+                        }
+                    }
+                } else if (hisHeroes.Count == 1) {
+                    if (Math.Sqrt(Dist2(hero, hisHeroes[0])) < 500) {
+                        Console.Error.WriteLine("fireball to hero 0");
+                        return Action.Fireball(hero, hisHeroes[0].X, hisHeroes[0].Y);
+                    }
+                }                    
+            }
+        }
+        return Action.Wait(hero);
+    }
+    
+    static Action TestAOEHeal(Entity hero, IEnumerable<Entity> my) {
+        if (hero.HeroType == HeroType.DOCTOR_STRANGE) {
+            if (hero.Mana > 50 && hero.CountDown[0] == 0) {            
+                var oh = my.Where(u => u.Type == UnitType.HERO && 
+                                       u.Id != hero.Id).FirstOrDefault();
+                var distOh = oh != null ? Math.Sqrt(Dist2(hero, oh)) : 100000;
+                if (oh != null && oh.Health < 300 && distOh < 350) {
+                    if (distOh < 250) {
+                        return Action.AOEHeal(hero, oh.X, oh.Y);
+                    } else {
+                        var pct = 250.0 / distOh;
+                        var px = hero.X + pct * (oh.X - hero.X);
+                        var py = hero.Y + pct * (oh.Y - hero.Y);
+                        return Action.AOEHeal(hero, px, py);
+                    }
+                } else if (oh == null && hero.Health < 300) {
+                    return Action.AOEHeal(hero, hero.X, hero.Y); // heal myself
+                }
+            }
+        }
+        return Action.Wait(hero);
+    }
+    
     static Action FindSafePosition(Entity hero, IEnumerable<Entity> my, IEnumerable<Entity> his) {
-        Entity closest = null; Action action = null;
-        if (IsSafe(hero, my, his)) {
-            Console.Error.WriteLine("hero {0} safe!", hero.HeroType);
+        Entity closest = null; Action action = null; bool closestIsSafe = false;
+        if (IsSafe(hero, my, his) && hero.Health > 300) {
+            Console.Error.WriteLine("hero {0} safe now! (cd[1]={1})", hero.HeroType, hero.CountDown[1]);
             // I'm already safe.. can I attack?                              
+            var fireballAction = TestFireball(hero, his);
+            if (fireballAction.Verb != "WAIT") return fireballAction;
+            
             var hisTower = his.Where(u => u.Type == UnitType.TOWER).FirstOrDefault();
-            foreach (var uc in his.Select(u => new { Unit = u, Action = turnTime(hero, u) }))
+            var candidates = his.Select(u => new { Unit = u, Action = turnTime(hero, u) }).ToList();
+            foreach (var uc in candidates.OrderBy(c => -c.Unit.Health))
             {   
                 if (uc.Action.Verb != "WAIT") {
-                    Console.Error.WriteLine("{0}", uc.Unit);                    
-                    if (closest == null || closest.Health > uc.Unit.Health) {
-                        if (Dist2(uc.Action.TX, uc.Action.TY, hisTower) > 160000
-                            && (uc.Unit.Health < hero.AttackDamage ||
-                                IsSafe(new Point((int)uc.Action.TX, (int)uc.Action.TY), my, his))) {
-                            // don't get too close to the tower
+                    Console.Error.WriteLine("{0}", uc.Unit);  
+                    bool newPointIsSafe = IsSafe(new Point((int)uc.Action.TX, (int)uc.Action.TY), my, his);
+
+                    if ((newPointIsSafe && uc.Unit.Type == UnitType.GROOT) ||
+                          uc.Unit.Health <= hero.AttackDamage
+                            || (newPointIsSafe && uc.Unit.Type == UnitType.HERO))                       
+                    {                        
+                        if (newPointIsSafe) {
                             Console.Error.WriteLine("found safe attack: {0}", uc.Unit);
-                            closest = uc.Unit; action = uc.Action;
+                        } else {
+                            Console.Error.WriteLine("found unsafe attack: {0}", uc.Unit);
                         }
+                            
+                        // don't get too close to the tower
+                        closestIsSafe = newPointIsSafe;
+                        closest = uc.Unit; 
+                        action = uc.Action;
+                        break;
                     }
                 }
             }  
@@ -261,15 +358,17 @@ class Player
             return action;
         }
         
-        // find the location that is right behind my 
+        var safeDelta = hero.Health < 300 ? 100 : 20;
+        var unitOrder = hero.Health < 300 ? 1.0 : -1.0;
+        // find the location that is right behind my troops
         var myTower = my.Where(e => e.Type == UnitType.TOWER).First();
         closest = my.Where(u => u.Type == UnitType.UNIT)
-                        .OrderBy(u => Dist2(myTower, u))
-                        .Where(u => GetSurounding(u, 20).Any(p => IsSafe(p, my, his)))
+                        .OrderBy(u => unitOrder * Dist2(myTower, u))
+                        .Where(u => GetSurounding(u, safeDelta).Any(p => IsSafe(p, my, his)))
                         .FirstOrDefault();
         Action mv = null;
         if (closest != null) {            
-            var safePos = GetSurounding(closest, 20).Where(p => IsSafe(p, my, his)).FirstOrDefault();
+            var safePos = GetSurounding(closest, safeDelta).Where(p => IsSafe(p, my, his)).FirstOrDefault();
             if (safePos != null) {
                 mv = Action.Move(hero, safePos.X, safePos.Y);
             }
@@ -277,7 +376,17 @@ class Player
         
         if (mv != null) {            
             Console.Error.WriteLine("finding spot behind my troops: {0} -> {1:0.0},{2:0.0}", closest.Id, mv.TX, mv.TY);                        
-            // now see if any troups are within firing range
+            // now see if any troups are within firing range            
+            var fireballAction = TestFireball(hero, his);
+            if (fireballAction.Verb != "WAIT" &&
+                (Math.Abs(mv.TX - hero.X) < 2 && Math.Abs(mv.TY - hero.Y) < 2)) {
+                return fireballAction;
+            }
+            var aoeHealAction = TestAOEHeal(hero, my);
+            if (aoeHealAction.Verb != "WAIT" &&
+                (Math.Abs(mv.TX - hero.X) < 2 && Math.Abs(mv.TY - hero.Y) < 2)) {
+                return aoeHealAction;
+            }
             var target = his.Where(u => Math.Sqrt(Dist2(mv.TX, mv.TY, hero)) < hero.AttackRange)
                             .OrderBy(u => u.Health).FirstOrDefault();
             if (target != null) {
@@ -293,7 +402,7 @@ class Player
             if (target != null) {
                 mv = Action.MoveAttack(hero, mv.TX, mv.TY, target);
             }
-        }
+        }        
         return mv;
     }
     
@@ -392,16 +501,16 @@ class Player
 
             if (roundType < 0) {
                 if (turn == 1) Console.WriteLine("IRONMAN");
-                else Console.WriteLine("VALKYRIE");
+                else Console.WriteLine("DOCTOR_STRANGE");
             }
             else {
                 if (turn <= 5) {                    
-                    Item bestItem = evalPurchase(items.Values, gold);
+                    Item bestItem = evalPurchase(myHeros[0], items.Values, gold);
                     if (bestItem != null) {
-                        if (turn % 2 == 0) {
+                        if (bestItem.Health > bestItem.Damage * 10) {
                             Console.WriteLine("BUY " + bestItem.Name);
                             Console.WriteLine(Action.Move(myHeros[1], myTower.X, myTower.Y));
-                        } else {                            
+                        } else {
                             Console.WriteLine(Action.Move(myHeros[0], myTower.X, myTower.Y));
                             Console.WriteLine("BUY " + bestItem.Name);
                         }
@@ -412,71 +521,33 @@ class Player
                 } else {
                     foreach(var myHero in myHeros) {
                         var healthRatio = myHero.Health * 1.0 / myHero.MaxHealth;
-                        Console.Error.WriteLine("{0} (hr: {1:0.00})", myHero.HeroType, healthRatio);
-                        bool heroInRange = false; Entity closest = null; Action action = null;                 
-                        foreach (var uc in his.Values.Select(u => new { Unit = u, Action = turnTime(myHero, u) }))
-                        {   
-                            if (uc.Action.Verb != "WAIT") {
-                                Console.Error.WriteLine("{0}", uc.Unit);
-                                heroInRange = (uc.Unit.Type == UnitType.HERO);
-                                if (closest == null || closest.Health > uc.Unit.Health) {
-                                    if (Dist2(uc.Action.TX, uc.Action.TY, hisTower) > 160000) {
-                                        // don't get too close to the tower
-                                        closest = uc.Unit;
-                                        action = uc.Action;
-                                    }
-                                }
-                            }
-                        }                    
+                        Console.Error.WriteLine("{0} (hr: {1:0.00})", myHero.HeroType, healthRatio);                                         
                         if (Dist2(myHero, hisTower) <= 160000) {
                             Console.Error.WriteLine("too close!");                        
                             var safeSpot = FindSafePosition(myHero, my.Values, his.Values);
                             Console.WriteLine("MOVE " + safeSpot.TX + " " + safeSpot.TY);
                             Console.WriteLine("MOVE " + safeSpot.TX + " " + safeSpot.TY);
                         } else {
-                            if (closest != null && healthRatio > 0.3) {
-                                // only attack if there are units of mine closer to that
-                                //var hasCover = my.Values.Where(u => u.Type == UnitType.UNIT
-                                //                    && Dist2(myTower, myHero) < Dist2(myTower, u))
-                                //                .Any();
-                                //if (!hasCover) {
-                                    action = FindSafePosition(myHero, my.Values, his.Values);                                
-                                //}
-                                Console.WriteLine(action);                            
-                            } else {
-                                if (healthRatio < 0.5) {
-                                    // see if we can buy a potion
-                                    Item bestItem = evalPotion(items.Values, myHero.Health, gold);
-                                    if (bestItem != null) {
-                                        gold -= bestItem.Cost;
-                                        Console.WriteLine("BUY " + bestItem.Name);
-                                    } else {
-                                        if (Dist2(myHero, myTower) > 50) {
-                                            var safeSpot = FindSafePosition(myHero, my.Values, his.Values);
-                                            Console.WriteLine(safeSpot);
-                                        } else {
-                                            if (closest != null) {
-                                                Console.WriteLine(action);
-                                            } else {
-                                                Console.WriteLine("WAIT");
-                                            }
-                                        }
-                                    }
-                                }else if (myHero.ItemsOwned < 3) {
-                                    Item bestItem = evalPurchase(items.Values, gold);
-                                    if (bestItem != null) {
-                                        gold -= bestItem.Cost;
-                                        Console.WriteLine("BUY " + bestItem.Name);                                        
-                                    } else {
-                                        var safeSpot = FindSafePosition(myHero, my.Values, his.Values);
-                                        Console.WriteLine(safeSpot);
-                                    }
-                                }else {                                
+                           if (myHero.Health < 270) {
+                                // see if we can buy a potion
+                                Item bestItem = evalPotion(myHero, items.Values, gold);
+                                if (bestItem != null && myHero.Health + bestItem.Health > 350) {
+                                    gold -= bestItem.Cost;
+                                    Console.WriteLine("BUY " + bestItem.Name);
+                                } else {                                    
                                     var safeSpot = FindSafePosition(myHero, my.Values, his.Values);
                                     Console.WriteLine(safeSpot);
                                 }
-                                
-                            }
+                            }else {
+                                Item bestItem = evalPurchase(myHero, items.Values, gold);
+                                if (bestItem != null) {
+                                    gold -= bestItem.Cost;
+                                    Console.WriteLine("BUY " + bestItem.Name);                                        
+                                } else {
+                                    var safeSpot = FindSafePosition(myHero, my.Values, his.Values);
+                                    Console.WriteLine(safeSpot);
+                                }
+                            }                        
                         }
                     }
                 }
